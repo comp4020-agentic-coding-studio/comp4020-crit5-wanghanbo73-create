@@ -133,12 +133,19 @@ export interface Level {
 // lower route (just run and long-jump the lava) always exists no matter
 // what happens to them.
 function buildLevel(): Level {
-  const mysteryBlock: Platform = { x: 460, y: GROUND_Y - 160, width: 40, height: 30 };
+  // Visual pass: mystery block and bricks were enlarged for legibility
+  // (width/height only, top-left anchor unchanged) --- every downstream
+  // measurement below (bricksEndX, hiddenPlatformStartX, pitStart, patrol
+  // zone, high platform, goal) already derives from these values rather than
+  // hardcoding them, so growing them only ever pushes bump-trigger undersides
+  // slightly lower (easier to reach from below, never harder) and never
+  // shifts a jump-over/landing requirement measured against a platform top.
+  const mysteryBlock: Platform = { x: 460, y: GROUND_Y - 160, width: 48, height: 36 };
 
-  const brickWidth = 40;
+  const brickWidth = 46;
   const brickGap = 10;
   const brickY = GROUND_Y - 60; // same height as the old "low, small-hop" platform
-  const brickHeight = 20;
+  const brickHeight = 28;
   const brickStartX = 650;
   const bricks: Platform[] = [0, 1, 2].map((i) => ({
     x: brickStartX + i * (brickWidth + brickGap),

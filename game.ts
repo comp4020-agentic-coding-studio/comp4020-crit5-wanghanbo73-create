@@ -151,9 +151,16 @@ requestAnimationFrame(tick);
 const SKY_TOP = "#7ec8e3";
 const SKY_BOTTOM = "#f2a463";
 const SUN = "#ffe3a0";
-const FAR_MOUNTAIN = "#8a97ad";
-const MID_RUIN = "#4b5468";
-const MID_RUIN_DARK = "#3a4254";
+const CLOUD = "#e8d8d0";
+// Background silhouettes are deliberately low-saturation blue/purple-grey
+// with no bright top edge --- the opposite treatment from ground/platforms
+// below, which get a bright grass/stone top strip. That contrast is the
+// affordance cue: muted+soft-edged reads as "scenery", crisp+lit reads as
+// "you can stand on this".
+const FAR_MOUNTAIN = "#7e8aa0";
+const FAR2_MOUNTAIN = "#697490";
+const MID_RUIN = "#5a5f78";
+const MID_RUIN_DARK = "#4a4e66";
 const NEAR_TUFT = "#3f7a2e";
 const NEAR_ROCK = "#5a5548";
 
@@ -214,13 +221,19 @@ function hash01(n: number): number {
   return s - Math.floor(s);
 }
 
+const CLOUD_SPACING = 220;
+const FAR2_SPACING = 340;
 const FAR_SPACING = 260;
 const MID_SPACING = 170;
 const NEAR_SPACING = 60;
+const CLOUD_LAYER = generateLayer(CLOUD_SPACING, Math.ceil(WORLD_WIDTH / CLOUD_SPACING) + 2, GROUND_Y * 0.28, 50, 30);
+const FAR2_LAYER = generateLayer(FAR2_SPACING, Math.ceil(WORLD_WIDTH / FAR2_SPACING) + 2, GROUND_Y, 130, 70);
 const FAR_LAYER = generateLayer(FAR_SPACING, Math.ceil(WORLD_WIDTH / FAR_SPACING) + 2, GROUND_Y - 20, 90, 60);
 const MID_LAYER = generateLayer(MID_SPACING, Math.ceil(WORLD_WIDTH / MID_SPACING) + 2, GROUND_Y + 4, 46, 60);
 const NEAR_LAYER = generateLayer(NEAR_SPACING, Math.ceil(WORLD_WIDTH / NEAR_SPACING) + 2, GROUND_Y + PHYSICS.GROUND_HEIGHT, 9, 14);
 
+const CLOUD_FACTOR = 0.06;
+const FAR2_FACTOR = 0.12;
 const FAR_FACTOR = 0.2;
 const MID_FACTOR = 0.5;
 const NEAR_FACTOR = 0.85;
@@ -240,7 +253,7 @@ function render(state: GameState, time: number): void {
   drawHiddenPlatform(state.hiddenPlatform, cameraX, state.elapsedMs);
   drawMysteryBlock(state.mysteryBlock, cameraX, state.elapsedMs);
   drawEnemy(state.enemy, cameraX, state.elapsedMs);
-  drawParallaxLayer(NEAR_LAYER, NEAR_FACTOR, cameraX, (i) => (i % 3 === 0 ? NEAR_ROCK : NEAR_TUFT));
+  drawParallaxLayer(NEAR_LAYER, NEAR_FACTOR, cameraX, (i) => (i % 3 === 0 ? NEAR_ROCK : NEAR_TUFT), "tower");
   if (landingAge !== null && landingAge < 260) drawDustBurst(cameraX, landingAnimX, landingAnimY, landingAge, 260, 6);
   drawPlayer(state, cameraX, loseAge, winAge);
   drawParticles(state.particles, cameraX, state.elapsedMs);
@@ -274,43 +287,63 @@ function drawBackground(cameraX: number, elapsedMs: number): void {
   c.arc(sunX, sunY, 26, 0, Math.PI * 2);
   c.fill();
 
-  drawParallaxLayer(FAR_LAYER, FAR_FACTOR, cameraX, () => FAR_MOUNTAIN, true);
-  drawParallaxLayer(MID_LAYER, MID_FACTOR, cameraX, (i) => (i % 4 === 0 ? MID_RUIN_DARK : MID_RUIN));
+  // Furthest back first: soft clouds, then a second faint mountain range,
+  // filling the upper half of the frame so gameplay content at the bottom
+  // no longer sits in an otherwise-empty sky.
+  drawParallaxLayer(CLOUD_LAYER, CLOUD_FACTOR, cameraX, () => CLOUD, "cloud", 0.35);
+  drawParallaxLayer(FAR2_LAYER, FAR2_FACTOR, cameraX, () => FAR2_MOUNTAIN, "triangle", 0.5);
+  drawParallaxLayer(FAR_LAYER, FAR_FACTOR, cameraX, () => FAR_MOUNTAIN, "triangle", 0.7);
+  drawParallaxLayer(MID_LAYER, MID_FACTOR, cameraX, (i) => (i % 4 === 0 ? MID_RUIN_DARK : MID_RUIN), "tower", 0.85);
 }
 
 // Renders a deterministic parallax layer. `colorOf(index)` picks per-shape
-// color so different silhouettes can be mixed into one layer; `triangle`
-// draws jagged mountain peaks instead of flat-topped blocks.
+// color so different silhouettes can be mixed into one layer; `shapeKind`
+// picks the silhouette style; `alpha` softens far-back layers so they read
+// as atmospheric scenery rather than solid, standable geometry --- that
+// softness (plus the desaturated palette above and the absence of any
+// bright top edge) is what tells them apart from ground/platforms, which
+// are always fully opaque with a lit top strip.
 function drawParallaxLayer(
   shapes: ParallaxShape[],
   factor: number,
   cameraX: number,
   colorOf: (index: number) => string,
-  triangle = false,
+  shapeKind: "tower" | "triangle" | "cloud" = "tower",
+  alpha = 1,
 ): void {
   const c = ctx!;
   const offset = cameraX * factor;
+  c.globalAlpha = alpha;
   for (let i = 0; i < shapes.length; i++) {
     const shape = shapes[i];
     const screenX = shape.x - offset;
     if (screenX + shape.w < 0 || screenX > PHYSICS.CANVAS_WIDTH) continue;
     c.fillStyle = colorOf(i);
-    if (triangle) {
+    if (shapeKind === "triangle") {
       c.beginPath();
       c.moveTo(screenX, shape.y);
       c.lineTo(screenX + shape.w / 2, shape.y - shape.h);
       c.lineTo(screenX + shape.w, shape.y);
       c.closePath();
       c.fill();
+    } else if (shapeKind === "cloud") {
+      // Soft, rounded blob --- never rectangular, so it can't be mistaken
+      // for a ledge even at a glance.
+      c.beginPath();
+      c.ellipse(screenX + shape.w / 2, shape.y, shape.w / 2, shape.h / 2, 0, 0, Math.PI * 2);
+      c.fill();
     } else {
-      // Ruin-tower silhouette: a body plus a couple of crenellation notches
-      // on top, deterministic per index so it never reshuffles.
+      // Ruin-tower silhouette: a body with a couple of dark window/arch
+      // cutouts instead of bright crenellations, so a low-contrast, no-top-
+      // highlight shape never reads as a lit, standable edge.
       c.fillRect(screenX, shape.y - shape.h, shape.w, shape.h);
+      c.fillStyle = "rgba(0,0,0,0.18)";
       const notch = shape.w / 5;
-      c.fillRect(screenX + notch * 0.5, shape.y - shape.h - 8, notch, 8);
-      c.fillRect(screenX + notch * 2.5, shape.y - shape.h - 12, notch, 12);
+      c.fillRect(screenX + notch * 0.7, shape.y - shape.h * 0.6, notch * 0.8, shape.h * 0.35);
+      c.fillRect(screenX + notch * 2.6, shape.y - shape.h * 0.75, notch * 0.7, shape.h * 0.3);
     }
   }
+  c.globalAlpha = 1;
 }
 
 // --- ground & stone platforms ----------------------------------------------
@@ -405,11 +438,12 @@ function drawStonePlatform(cameraX: number): void {
 // hazard's screen position from its collision rectangle (both derive from
 // the same world x).
 
-const LAVA_DEEP = "#7a1a0a";
-const LAVA_MID = "#c94b1a";
-const LAVA_HOT = "#f2a221";
-const LAVA_GLOW = "rgba(255, 140, 40, 0.35)";
-const LAVA_EDGE_LIT = "rgba(255, 150, 60, 0.25)";
+const LAVA_DEEP = "#5e1206";
+const LAVA_MID = "#d1470f";
+const LAVA_HOT = "#ffcc33";
+const LAVA_GLOW = "rgba(255, 150, 40, 0.45)";
+const LAVA_EDGE_LIT = "rgba(255, 150, 60, 0.3)";
+const LAVA_FAR_GLOW = "rgba(255, 110, 30, 0.18)";
 
 function drawLava(cameraX: number, elapsedMs: number): void {
   const c = ctx!;
@@ -422,7 +456,11 @@ function drawLava(cameraX: number, elapsedMs: number): void {
     const surfaceTop = GROUND_Y + 6;
     const bottom = PHYSICS.CANVAS_HEIGHT;
 
-    // Warm glow spilling onto the lip of the surrounding ground/dirt.
+    // A wide, soft danger glow noticeable well before the player is close,
+    // plus a tighter warm glow spilling onto the lip of the surrounding
+    // ground/dirt right at the edge.
+    c.fillStyle = LAVA_FAR_GLOW;
+    c.fillRect(screenX - 60, GROUND_Y - 40, pit.width + 120, 48);
     c.fillStyle = LAVA_EDGE_LIT;
     c.fillRect(screenX - 18, GROUND_Y - 10, pit.width + 36, 18);
 
@@ -500,12 +538,34 @@ function drawMysteryBlock(state: MysteryBlockState, cameraX: number, elapsedMs: 
   const alpha = state.used ? 0.55 : 1;
   c.globalAlpha = alpha;
 
+  c.fillStyle = "#12121a"; // dark outline, matching the player/enemy treatment
+  c.fillRect(screenX - 2, y - 2, state.width + 4, state.height + 4);
   c.fillStyle = "#2a1740";
   c.fillRect(screenX, y, state.width, state.height);
 
   const pulse = state.used ? 0.4 : 0.6 + Math.sin(t * 4) * 0.4;
-  c.fillStyle = `rgba(160, 90, 230, ${0.25 + pulse * 0.25})`;
-  c.fillRect(screenX - 3, y - 3, state.width + 6, state.height + 6);
+  c.fillStyle = `rgba(160, 90, 230, ${0.3 + pulse * 0.3})`;
+  c.fillRect(screenX - 4, y - 4, state.width + 8, state.height + 8);
+
+  // A few pixels drifting inward toward the core while unused --- draws the
+  // eye without any text, purely a function of world x/elapsed time.
+  if (!state.used) {
+    const cx0 = screenX + state.width / 2;
+    const cy0 = y + state.height / 2;
+    for (let i = 0; i < 4; i++) {
+      const cycle = 1.6 + i * 0.2;
+      const phase = (t + i * 0.4) % cycle;
+      const progress = phase / cycle;
+      const angle = (i / 4) * Math.PI * 2 + i;
+      const dist = (1 - progress) * state.width * 0.9;
+      const mx = cx0 + Math.cos(angle) * dist;
+      const my = cy0 + Math.sin(angle) * dist;
+      c.globalAlpha = alpha * (1 - progress) * 0.8;
+      c.fillStyle = "#bfe8ff";
+      c.fillRect(mx - 1, my - 1, 2, 2);
+    }
+    c.globalAlpha = alpha;
+  }
 
   // Diamond/energy-core motif in cyan/gold/purple.
   const cx = screenX + state.width / 2;
@@ -530,6 +590,13 @@ function drawMysteryBlock(state: MysteryBlockState, cameraX: number, elapsedMs: 
   c.closePath();
   c.fill();
 
+  // Brief white flash right on trigger, on top of the bounce.
+  if (state.used && state.bounceElapsed < 180) {
+    c.globalAlpha = alpha * (1 - state.bounceElapsed / 180);
+    c.fillStyle = "#ffffff";
+    c.fillRect(screenX, y, state.width, state.height);
+  }
+
   c.globalAlpha = 1;
 }
 
@@ -547,19 +614,34 @@ function drawBricks(bricks: BrickState[], cameraX: number): void {
     const screenX = brick.x - cameraX;
     if (screenX + brick.width < 0 || screenX > PHYSICS.CANVAS_WIDTH) continue;
 
-    // Brief upward nudge right after being head-bumped, mirroring the
-    // mystery block's bounce so a hit brick reads the same way even though
-    // it then breaks instead of settling.
+    c.fillStyle = "#12121a"; // dark outline, matching the rest of the cast
+    c.fillRect(screenX - 1, brick.y - 1, brick.width + 2, brick.height + 2);
     c.fillStyle = "#5a5266";
     c.fillRect(screenX, brick.y, brick.width, brick.height);
-    c.fillStyle = "#8a7fa0"; // top edge highlight
-    c.fillRect(screenX, brick.y, brick.width, 3);
-    c.fillStyle = "#332d40"; // bottom shadow
-    c.fillRect(screenX, brick.y + brick.height - 3, brick.width, 3);
+    c.fillStyle = "#a89bc4"; // brighter top highlight --- reads as standable
+    c.fillRect(screenX, brick.y, brick.width, 4);
+    c.fillStyle = "#2a2434"; // dark bottom shadow, gives it real volume
+    c.fillRect(screenX, brick.y + brick.height - 4, brick.width, 4);
 
-    c.fillStyle = "rgba(0, 0, 0, 0.25)";
-    c.fillRect(screenX + brick.width / 2 - 1, brick.y + 3, 2, brick.height - 6);
-    c.fillRect(screenX + 3, brick.y + brick.height / 2 - 1, brick.width - 6, 2);
+    // Mortar seams: a two-row brick grid, deterministic per brick index/row.
+    const rowH = (brick.height - 8) / 2;
+    for (let row = 0; row < 2; row++) {
+      const ry = brick.y + 4 + row * rowH;
+      c.fillStyle = "rgba(0, 0, 0, 0.3)";
+      c.fillRect(screenX, ry, brick.width, 1);
+      const seamX = row % 2 === 0 ? brick.width / 2 : brick.width / 3;
+      c.fillRect(screenX + seamX, ry, 1, rowH);
+    }
+
+    // A couple of deterministic hairline cracks for texture.
+    if (hash01(brick.id * 13 + 4) > 0.4) {
+      c.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(screenX + brick.width * 0.25, brick.y + brick.height * 0.3);
+      c.lineTo(screenX + brick.width * 0.4, brick.y + brick.height * 0.75);
+      c.stroke();
+    }
   }
 }
 
@@ -826,6 +908,13 @@ function drawDustBurst(cameraX: number, worldX: number, worldY: number, age: num
 // end-of-run poses --- so once the run stops being PLAYING the character
 // never keeps showing a normal running animation.
 
+// Visual-only enlargement so poses stay readable at typical viewing sizes.
+// Scaled around the feet (the actual ground-contact point), so the torso
+// still sits squarely over PHYSICS.PLAYER_WIDTH/HEIGHT --- only the already-
+// permitted scarf/limb overhang grows along with it. The hitbox itself
+// (game-core.ts) is completely untouched.
+const PLAYER_VISUAL_SCALE = 1.2;
+
 type RenderPose = Pose | "hurt" | "win";
 
 function renderPoseFor(player: PlayerState, status: GameStatus): RenderPose {
@@ -854,11 +943,13 @@ function drawPlayer(state: GameState, cameraX: number, loseAge: number | null, w
   }
 
   c.save();
-  c.translate(screenX, top);
-  if (!player.facingRight) {
-    c.translate(w, 0);
-    c.scale(-1, 1);
-  }
+  // Anchor the enlargement at the feet (screenX + w/2, player.y) so the
+  // body grows upward/outward from its actual ground-contact point rather
+  // than drifting away from the hitbox.
+  c.translate(screenX + w / 2, player.y);
+  c.scale(PLAYER_VISUAL_SCALE, PLAYER_VISUAL_SCALE);
+  if (!player.facingRight) c.scale(-1, 1);
+  c.translate(-w / 2, -h);
 
   if (pose === "hurt") {
     const age = loseAge ?? 0;
@@ -1021,14 +1112,46 @@ function drawHud(state: GameState, _cameraX: number): void {
   c.fillStyle = "#fdf6e3";
   c.fillText("PIXEL RUINS", 16, 14);
 
-  const dotsX = 10;
-  const dotsY = 34;
+  // Progress icons, one per world landmark already crossed --- a distinct
+  // silhouette per landmark (not identical dots) so the meaning is legible
+  // from shape alone: a flame for the lava trench, a spike/eye for the
+  // guardian's patrol zone, a diamond for the portal itself.
+  const iconY = 34;
   for (let i = 0; i < HUD_LANDMARKS.length; i++) {
     const reached = state.player.x >= HUD_LANDMARKS[i] || state.status === "WIN";
-    c.fillStyle = reached ? "#8fe8ff" : "rgba(255,255,255,0.35)";
-    c.beginPath();
-    c.arc(dotsX + i * 14 + 5, dotsY + 5, 4, 0, Math.PI * 2);
-    c.fill();
+    drawHudIcon(c, 12 + i * 18, iconY, i, reached);
   }
   c.restore();
+}
+
+function drawHudIcon(c: CanvasRenderingContext2D, cx: number, cy: number, kind: number, lit: boolean): void {
+  c.globalAlpha = lit ? 1 : 0.3;
+  if (kind === 0) {
+    // Flame --- past the lava.
+    c.fillStyle = lit ? "#ffb54a" : "#8a6a4a";
+    c.beginPath();
+    c.moveTo(cx, cy - 6);
+    c.lineTo(cx + 4, cy + 3);
+    c.lineTo(cx, cy + 6);
+    c.lineTo(cx - 4, cy + 3);
+    c.closePath();
+    c.fill();
+  } else if (kind === 1) {
+    // A single watchful eye --- past the guardian.
+    c.fillStyle = lit ? "#c99bf0" : "#6e5a7a";
+    c.fillRect(cx - 6, cy - 4, 12, 8);
+    c.fillStyle = lit ? "#ff5fb0" : "#4a3a54";
+    c.fillRect(cx - 2, cy - 2, 4, 4);
+  } else {
+    // Diamond --- at the portal.
+    c.fillStyle = lit ? "#8fe8ff" : "#4a5a66";
+    c.beginPath();
+    c.moveTo(cx, cy - 6);
+    c.lineTo(cx + 6, cy);
+    c.lineTo(cx, cy + 6);
+    c.lineTo(cx - 6, cy);
+    c.closePath();
+    c.fill();
+  }
+  c.globalAlpha = 1;
 }
