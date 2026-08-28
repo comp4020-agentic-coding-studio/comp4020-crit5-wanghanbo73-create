@@ -1,70 +1,32 @@
 # Process overview
 
-<!-- TEMPLATE: this file is a shape to fill in, not a form. Replace everything
-     in it with your own overview, and delete this comment — `pnpm
-     check:evidence` will remind you if it's still here. -->
-
-A reading-guide to how the work came together --- a map to your process, not an
-essay about it. Markers read this file and follow its citations; they don't
-trawl the repo for evidence you didn't point at, so if a moment mattered, cite
-it.
-
-This file is the shape; the course site's
-[assessment page](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#what-you-submit)
-is the requirement, and its
-[word counts](https://comp.anu.edu.au/courses/comp4020-agentic-coding-studio/topics/assessment/#word-counts)
-cover every deliverable.
-
 ## What I built
 
-One paragraph: the thing, and the idea behind it.
+I built **Pixel Ruins**, a one-level browser platform game rendered with Canvas. The player explores a scrolling block world using variable-height jumps, activates a mystery block to reveal a safer route, crosses animated lava, breaks blocks, encounters a patrol enemy, and reaches a portal to win. Falling into lava or touching the enemy from the side ends the round. The level teaches these rules through its layout and visual feedback rather than written instructions.
+
+The finished game is deployed at the [public GitHub Pages site](https://comp4020-agentic-coding-studio.github.io/comp4020-crit5-wanghanbo73-create/).
 
 ## The moments that mattered
 
-Three or four for an assignment; fewer is fine for a weekly prototype. Keep the
-list short so each moment has room to do all four jobs:
+1. **Building a controllable foundation before designing the level.** I directed the work in small stages instead of asking the coding agent to generate the complete game at once:
 
-1. **what happened** --- the problem, or the thing that went wrong
-2. **what you did instead of the obvious thing** --- the call you made, and why
-   it beat the obvious one
-3. **how you knew it was right** --- the check you ran, the viewport you looked
-   at, what you read before accepting the diff
-4. **the citation** --- a commit or commit range, a `CLAUDE.md` change, a check
-   that went from red to green, a prompt paired with the commit it produced
+   > First create the Canvas, player movement, gravity and variable-height jumping. Do not add enemies, hazards or a complete level yet.
 
-Jobs 2 and 3 are the ones the repo can't tell a reader on its own, so they're
-where the marks are. The strongest moments are the ones where a correction
-landed in the **harness** --- the standards and checks your work has to satisfy
---- rather than in a retry: a rule added to `CLAUDE.md`, a check wired up, an
-attempt thrown away. Retrying until it passes is the routine case, and changing
-what the work runs against is the skilled one.
+   The first playable loop established responsive movement and separated game rules from rendering. I then added world coordinates, solid-platform collision and a following camera before introducing more mechanics. This gave later work a stable physical foundation rather than requiring repeated fixes to an already complicated level. Evidence: [`4053074...48a274d`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-wanghanbo73-create/compare/4053074...48a274d).
 
-Cite each moment as a link whose text is the commit hash or range and whose
-target is this repo's commit or compare URL, so a reader clicks straight to the
-evidence:
+2. **Using the environment to teach without instructions.** The early dark pit technically caused a loss, but it did not clearly communicate danger. I replaced it with animated lava and added stronger colour contrast, bubbles and edge lighting. The mystery block reveals a hidden platform, creating a safer upper route, while a direct jump remains faster but riskier. This made the level itself communicate danger and choice instead of adding explanatory text. Evidence: [`068aca8`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-wanghanbo73-create/commit/068aca8).
 
-- one commit: [`a1b2c3d`](https://github.com/YOUR-ORG/YOUR-REPO/commit/a1b2c3d)
-- a range:
-  [`a1b2c3d...e4f5a6b`](https://github.com/YOUR-ORG/YOUR-REPO/compare/a1b2c3d...e4f5a6b)
+3. **Giving automated tests one precise job.** I added the patrol enemy, victory and loss states, and focused the rule checks on the difference between two contacts: descending onto the enemy defeats it and bounces the player, while touching it from the side produces a loss. Encoding this distinction in the testable game logic protected the central rule while I continued changing animation and presentation. Tests could establish the state transition, but not whether the collision looked or felt fair in play. Evidence: [`2e4a061`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-wanghanbo73-create/commit/2e4a061).
 
-To pair a prompt with the commit it produced, quote the prompt (curated, not a
-full transcript) next to the citation:
+4. **Correcting the finished presentation through browser play.** After the complete loop was playable, viewing and playing it in the browser revealed that the Canvas occupied too little of the page, the character was difficult to read, and background structures looked too similar to solid platforms. Instead of adding more mechanics, I enlarged the game presentation, removed distracting default page styling, unified the title, strengthened the player silhouette, and increased the visual separation between scenery and playable surfaces. This correction came from experiencing the finished game rather than reading its code. Evidence: [`5a8b546...12f0162`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-wanghanbo73-create/compare/5a8b546...12f0162).
 
-> the prompt, verbatim
+## Before shipping
 
-Screenshots are welcome where one carries the verification better than a
-sentence does. Commit the file to this repo and link it with a **relative**
-path, which is what makes it render on GitHub: `![alt text](docs/before.png)`.
-Images don't count towards the word count and don't replace the citation.
+I checked the focused automated tests, production build and evidence requirements, and played the game at the required marking viewports. The deployed build preserves keyboard input, responsive Canvas scaling, clear win and loss endings, and the absence of gameplay instructions.
 
-## Before you ship
+The final version is available at:
 
-`pnpm check:evidence` verifies your citations resolve to real commits, that a
-reflection entry the marker reads is in `reflections/`, and that your
-`CLAUDE.md` is there --- before a marker ever opens the file. It checks that
-your map is traceable, not that it is good: the marker judges whether your
-small, deliberately chosen set of moments shows real judgement and reflection. A
-green check is not a substitute for that curation.
+* [Pixel Ruins — GitHub Pages](https://comp4020-agentic-coding-studio.github.io/comp4020-crit5-wanghanbo73-create/)
+* [Source repository](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-wanghanbo73-create)
 
-Images aren't checked: unlike a citation whose SHA doesn't resolve, a broken
-image is visible the moment this file is rendered on GitHub.
+The accompanying reflection is in `reflections/crit-5.md`.
