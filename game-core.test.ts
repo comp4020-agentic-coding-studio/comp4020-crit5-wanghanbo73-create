@@ -20,6 +20,14 @@ import {
   type PlayerState,
 } from "./game-core.ts";
 
+// Steps a full GameState (not just the player) for the interactive-block and
+// lava tests below, since those live in updateGame rather than updatePlayer.
+function runGame(state: GameState, input: InputState, frames: number, dt: number = FRAME): GameState {
+  let next = state;
+  for (let i = 0; i < frames; i++) next = updateGame(next, input, dt);
+  return next;
+}
+
 const FRAME = 1 / 60;
 
 function run(
@@ -37,7 +45,17 @@ function run(
 // A tiny, hand-built level for tests that want a single simple platform
 // rather than the real level's full layout.
 function levelWith(platforms: Platform[], worldWidth = 2000): Level {
-  return { worldWidth, platforms, pits: [], spawn: { x: 100, y: GROUND_Y } };
+  return {
+    worldWidth,
+    platforms,
+    pits: [],
+    spawn: { x: 100, y: GROUND_Y },
+    // Placed far off in the unused stretch of these hand-built test levels
+    // so they never interfere with the platform under test.
+    mysteryBlock: { x: -1000, y: -1000, width: 0, height: 0 },
+    bricks: [],
+    hiddenPlatform: { x: -1000, y: -1000, width: 0, height: 0 },
+  };
 }
 
 describe("horizontal movement", () => {
@@ -280,6 +298,7 @@ describe("camera", () => {
 describe("falling into a pit ends the game", () => {
   it("switches status to LOSE once the player drops below the death height", () => {
     const state: GameState = {
+      ...createInitialGameState(),
       player: { ...createInitialPlayerState(), y: DEATH_Y - 1, grounded: false, vy: 500 },
       cameraX: 300,
       status: "PLAYING",
@@ -290,6 +309,7 @@ describe("falling into a pit ends the game", () => {
 
   it("freezes physics and input once LOSE", () => {
     const lost: GameState = {
+      ...createInitialGameState(),
       player: { ...createInitialPlayerState(), x: 500, y: DEATH_Y + 50 },
       cameraX: 300,
       status: "LOSE",
@@ -303,7 +323,12 @@ describe("restart", () => {
   it("produces a state identical to the very first load", () => {
     const first = createInitialGameState();
     const messedUp = updateGame(
-      { player: { ...first.player, x: 900, y: 100, vx: -50, vy: 300, grounded: false, jumping: true, jumpHoldTime: 77 }, cameraX: 400, status: "PLAYING" },
+      {
+        ...first,
+        player: { ...first.player, x: 900, y: 100, vx: -50, vy: 300, grounded: false, jumping: true, jumpHoldTime: 77 },
+        cameraX: 400,
+        status: "PLAYING",
+      },
       NO_INPUT,
       FRAME,
     );
@@ -311,5 +336,111 @@ describe("restart", () => {
 
     const restarted = createInitialGameState();
     expect(restarted).toEqual(first);
+  });
+
+  it("resets the mystery block, bricks, hidden platform and particles too", () => {
+    const first = createInitialGameState();
+    let messedUp = runGame(
+      { ...first, player: { ...first.player, x: first.mysteryBlock.x + 5, y: first.mysteryBlock.y + first.mysteryBlock.height + PHYSICS.PLAYER_HEIGHT + 5, vy: -400, grounded: false } },
+      NO_INPUT,
+      1,
+    );
+    expect(messedUp.mysteryBlock.used).toBe(true);
+
+    const restarted = createInitialGameState();
+    expect(restarted).toEqual(first);
+    expect(restarted.mysteryBlock.used).toBe(false);
+    expect(restarted.hiddenPlatform.triggeredAt).toBe(null);
+    expect(restarted.bricks.every((brick) => !brick.destroyed)).toBe(true);
+    expect(restarted.particles).toEqual([]);
+  });
+});
+
+describe("mystery block", () => {
+  function hitFromBelow(state: GameState): GameState {
+    const block = state.mysteryBlock;
+    const rising: GameState = {
+      ...state,
+      player: {
+        ...state.player,
+        x: block.x + 5,
+        y: block.y + block.height + PHYSICS.PLAYER_HEIGHT + 5,
+        vy: -400,
+        grounded: false,
+      },
+    };
+    return updateGame(rising, NO_INPUT, FRAME);
+  }
+
+  it("triggers only once: a second hit never recreates the platform or replays the reward", () => {
+    const initial = createInitialGameState();
+    expect(initial.mysteryBlock.used).toBe(false);
+    expect(initial.hiddenPlatform.triggeredAt).toBe(null);
+
+    const afterFirstHit = hitFromBelow(initial);
+    expect(afterFirstHit.mysteryBlock.used).toBe(true);
+    expect(afterFirstHit.hiddenPlatform.triggeredAt).not.toBe(null);
+    expect(afterFirstHit.particles.length).toBeGreaterThan(0);
+
+    // Let the player fall back down, then hit the block from below again.
+    let settled = afterFirstHit;
+    for (let i = 0; i < 60; i++) settled = updateGame(settled, NO_INPUT, FRAME);
+
+    const afterSecondHit = hitFromBelow(settled);
+    expect(afterSecondHit.mysteryBlock.used).toBe(true);
+    expect(afterSecondHit.hiddenPlatform.triggeredAt).toBe(afterFirstHit.hiddenPlatform.triggeredAt);
+  });
+});
+
+describe("destructible bricks", () => {
+  function hitBrickFromBelow(state: GameState, brickIndex: number): GameState {
+    const brick = state.bricks[brickIndex];
+    const rising: GameState = {
+      ...state,
+      player: {
+        ...state.player,
+        x: brick.x + 2,
+        y: brick.y + brick.height + PHYSICS.PLAYER_HEIGHT + 5,
+        vy: -400,
+        grounded: false,
+      },
+    };
+    return updateGame(rising, NO_INPUT, FRAME);
+  }
+
+  it("a destroyed brick stops colliding, and the other two are unaffected", () => {
+    const initial = createInitialGameState();
+    const afterHit = hitBrickFromBelow(initial, 0);
+
+    expect(afterHit.bricks[0].destroyed).toBe(true);
+    expect(afterHit.bricks[1].destroyed).toBe(false);
+    expect(afterHit.bricks[2].destroyed).toBe(false);
+
+    // Once destroyed, falling straight through where the brick used to be
+    // must not ground the player on it.
+    const brick = initial.bricks[0];
+    let falling: GameState = {
+      ...afterHit,
+      player: { ...afterHit.player, x: brick.x + 2, y: brick.y - 5, vy: 400, grounded: false },
+    };
+    falling = updateGame(falling, NO_INPUT, FRAME);
+    expect(falling.player.grounded).toBe(false);
+    expect(falling.player.y).toBeGreaterThan(brick.y);
+  });
+});
+
+describe("lava hazard", () => {
+  it("touching the lava causes LOSE without ever treating it as a standable platform", () => {
+    const [pit] = LEVEL.pits;
+    const initial = createInitialGameState();
+    const overLava: GameState = {
+      ...initial,
+      player: { ...initial.player, x: pit.x + 10, y: pit.surfaceY, vy: 100, grounded: false },
+    };
+    const next = updateGame(overLava, NO_INPUT, FRAME);
+
+    expect(next.status).toBe("LOSE");
+    expect(next.player.grounded).toBe(false);
+    expect(next.player.vy).not.toBe(0);
   });
 });

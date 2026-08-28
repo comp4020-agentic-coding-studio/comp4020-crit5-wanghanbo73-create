@@ -7,10 +7,16 @@ import {
   PHYSICS,
   WORLD_WIDTH,
   createInitialGameState,
+  hiddenPlatformProgress,
+  isHiddenPlatformSolid,
   poseFor,
   updateGame,
+  type BrickState,
   type GameState,
+  type HiddenPlatformState,
   type InputState,
+  type MysteryBlockState,
+  type Particle,
   type PlayerState,
 } from "./game-core.ts";
 
@@ -102,8 +108,6 @@ const GROUND_TOP = "#5b8c3a";
 const GROUND_BOTTOM = "#7a5230";
 const PLATFORM_TOP = "#8a6a3a";
 const PLATFORM_BODY = "#6b4e2a";
-const PIT_WALL = "#241f2e";
-const PIT_FLOOR = "#0d0b12";
 const SKIN = "#e8b98a";
 const HAIR = "#3b2a1a";
 const SHIRT = "#3f6fd1";
@@ -156,8 +160,13 @@ function render(state: GameState): void {
   drawParallaxLayer(FAR_LAYER, FAR_FACTOR, cameraX, "#5c6f9e"); // distant mountains
   drawParallaxLayer(MID_LAYER, MID_FACTOR, cameraX, "#3d4f66"); // ruined-tower silhouettes
   drawLevel(cameraX);
+  drawLava(cameraX, state.elapsedMs);
+  drawBricks(state.bricks, cameraX);
+  drawHiddenPlatform(state.hiddenPlatform, cameraX, state.elapsedMs);
+  drawMysteryBlock(state.mysteryBlock, cameraX, state.elapsedMs);
   drawParallaxLayer(NEAR_LAYER, NEAR_FACTOR, cameraX, "#3f7a2e"); // foreground grass tufts
   drawPlayer(state.player, cameraX);
+  drawParticles(state.particles, cameraX, state.elapsedMs);
 }
 
 function drawSky(): void {
@@ -184,18 +193,217 @@ function drawLevel(cameraX: number): void {
       ctx!.fillRect(screenX + seam, platform.y, 2, platform.height);
     }
   }
+}
+
+// --- lava ---------------------------------------------------------------
+//
+// Every visual (ripple, bubbles, splashes) is a deterministic function of
+// elapsedMs --- the same instant always looks the same, so nothing flickers
+// or reshuffles frame to frame, and camera movement never desyncs the
+// hazard's screen position from its collision rectangle (both derive from
+// the same world x).
+
+const LAVA_DEEP = "#7a1a0a";
+const LAVA_MID = "#c94b1a";
+const LAVA_HOT = "#f2a221";
+const LAVA_GLOW = "rgba(255, 140, 40, 0.35)";
+const LAVA_EDGE_LIT = "rgba(255, 150, 60, 0.25)";
+
+function drawLava(cameraX: number, elapsedMs: number): void {
+  const c = ctx!;
+  const t = elapsedMs / 1000;
 
   for (const pit of LEVEL.pits) {
     const screenX = pit.x - cameraX;
     if (screenX + pit.width < 0 || screenX > PHYSICS.CANVAS_WIDTH) continue;
 
-    ctx!.fillStyle = PIT_FLOOR;
-    ctx!.fillRect(screenX, GROUND_Y, pit.width, PHYSICS.CANVAS_HEIGHT - GROUND_Y);
-    ctx!.fillStyle = PIT_WALL;
-    for (let wx = 0; wx < pit.width; wx += 24) {
-      ctx!.fillRect(screenX + wx, GROUND_Y, 16, PHYSICS.CANVAS_HEIGHT - GROUND_Y);
+    const surfaceTop = GROUND_Y + 6;
+    const bottom = PHYSICS.CANVAS_HEIGHT;
+
+    // Warm glow spilling onto the lip of the surrounding ground/dirt.
+    c.fillStyle = LAVA_EDGE_LIT;
+    c.fillRect(screenX - 18, GROUND_Y - 10, pit.width + 36, 18);
+
+    // Depth gradient --- hot near the surface, darkening toward the bottom.
+    const gradient = c.createLinearGradient(0, surfaceTop, 0, bottom);
+    gradient.addColorStop(0, LAVA_HOT);
+    gradient.addColorStop(0.35, LAVA_MID);
+    gradient.addColorStop(1, LAVA_DEEP);
+    c.fillStyle = gradient;
+    c.fillRect(screenX, surfaceTop, pit.width, bottom - surfaceTop);
+
+    // Slow surface ripple: a few overlapping sine bands, each a fixed
+    // function of world x and elapsed time (never per-frame randomized).
+    for (let band = 0; band < 3; band++) {
+      const bandOffset = band * 7;
+      c.fillStyle = band === 0 ? LAVA_HOT : "rgba(255, 200, 80, 0.35)";
+      for (let x = 0; x < pit.width; x += 6) {
+        const worldX = pit.x + x;
+        const ripple = Math.sin(worldX * 0.05 + t * (1.4 + band * 0.3) + band) * 3;
+        c.fillRect(screenX + x, surfaceTop + bandOffset + ripple, 6, 3);
+      }
     }
+
+    // Occasional rising-and-popping bubbles: deterministic per bubble index,
+    // cycling through a fixed lifetime so each one rises then "pops".
+    const bubbleCount = Math.max(3, Math.floor(pit.width / 40));
+    for (let i = 0; i < bubbleCount; i++) {
+      const cycle = 2.4 + (i % 3) * 0.5;
+      const phase = (t + i * 0.83) % cycle;
+      if (phase > cycle * 0.7) continue; // popped; brief gap before it re-forms
+      const progress = phase / (cycle * 0.7);
+      const bx = pit.x + ((i * 53) % pit.width);
+      const by = surfaceTop + 20 - progress * 18;
+      const radius = 2 + progress * 3;
+      c.fillStyle = progress > 0.85 ? "rgba(255, 235, 180, 0.9)" : "rgba(255, 170, 60, 0.85)";
+      c.beginPath();
+      c.arc(bx - cameraX, by, radius, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // Occasional small splashes near the edges.
+    for (let i = 0; i < 2; i++) {
+      const cycle = 3.1 + i * 0.6;
+      const phase = (t + i * 1.7) % cycle;
+      if (phase > 0.35) continue;
+      const splashX = pit.x + (i === 0 ? 12 : pit.width - 12);
+      const rise = Math.sin((phase / 0.35) * Math.PI) * 10;
+      c.fillStyle = "rgba(255, 190, 90, 0.8)";
+      c.fillRect(splashX - cameraX - 2, surfaceTop - rise, 4, 4);
+    }
+
+    // Soft ambient glow above the surface.
+    c.fillStyle = LAVA_GLOW;
+    c.fillRect(screenX, surfaceTop - 14, pit.width, 14);
   }
+}
+
+// --- mystery block --------------------------------------------------------
+//
+// An original glowing energy-core motif --- deliberately not a Mario-style
+// question-mark block. Pulses/floats while unused, dims (but stays visible)
+// once triggered.
+
+function drawMysteryBlock(state: MysteryBlockState, cameraX: number, elapsedMs: number): void {
+  const screenX = state.x - cameraX;
+  if (screenX + state.width < 0 || screenX > PHYSICS.CANVAS_WIDTH) return;
+  const c = ctx!;
+  const t = elapsedMs / 1000;
+
+  // Brief upward bounce right after triggering, then settles.
+  const bounce = state.used && state.bounceElapsed < 220 ? -Math.sin((state.bounceElapsed / 220) * Math.PI) * 6 : 0;
+  const floatOffset = state.used ? 0 : Math.sin(t * 2.2) * 2;
+  const y = state.y + bounce + floatOffset;
+
+  const alpha = state.used ? 0.55 : 1;
+  c.globalAlpha = alpha;
+
+  c.fillStyle = "#2a1740";
+  c.fillRect(screenX, y, state.width, state.height);
+
+  const pulse = state.used ? 0.4 : 0.6 + Math.sin(t * 4) * 0.4;
+  c.fillStyle = `rgba(160, 90, 230, ${0.25 + pulse * 0.25})`;
+  c.fillRect(screenX - 3, y - 3, state.width + 6, state.height + 6);
+
+  // Diamond/energy-core motif in cyan/gold/purple.
+  const cx = screenX + state.width / 2;
+  const cy = y + state.height / 2;
+  const r = state.width * 0.32;
+  c.fillStyle = "#f4d35e"; // gold outer diamond
+  c.beginPath();
+  c.moveTo(cx, cy - r);
+  c.lineTo(cx + r, cy);
+  c.lineTo(cx, cy + r);
+  c.lineTo(cx - r, cy);
+  c.closePath();
+  c.fill();
+
+  c.fillStyle = "#39e6e6"; // cyan core
+  const innerR = r * 0.5;
+  c.beginPath();
+  c.moveTo(cx, cy - innerR);
+  c.lineTo(cx + innerR, cy);
+  c.lineTo(cx, cy + innerR);
+  c.lineTo(cx - innerR, cy);
+  c.closePath();
+  c.fill();
+
+  c.globalAlpha = 1;
+}
+
+// --- destructible bricks ---------------------------------------------------
+//
+// An energy-brick aesthetic (grid seams, edge highlight, bottom shadow) ---
+// deliberately not a copy of Mario's brick texture. Each brick's state is
+// fully independent; a destroyed brick is simply not drawn (its fragments
+// are rendered as particles).
+
+function drawBricks(bricks: BrickState[], cameraX: number): void {
+  const c = ctx!;
+  for (const brick of bricks) {
+    if (brick.destroyed) continue;
+    const screenX = brick.x - cameraX;
+    if (screenX + brick.width < 0 || screenX > PHYSICS.CANVAS_WIDTH) continue;
+
+    c.fillStyle = "#5a5266";
+    c.fillRect(screenX, brick.y, brick.width, brick.height);
+    c.fillStyle = "#8a7fa0"; // top edge highlight
+    c.fillRect(screenX, brick.y, brick.width, 3);
+    c.fillStyle = "#332d40"; // bottom shadow
+    c.fillRect(screenX, brick.y + brick.height - 3, brick.width, 3);
+
+    c.fillStyle = "rgba(0, 0, 0, 0.25)";
+    c.fillRect(screenX + brick.width / 2 - 1, brick.y + 3, 2, brick.height - 6);
+    c.fillRect(screenX + 3, brick.y + brick.height / 2 - 1, brick.width - 6, 2);
+  }
+}
+
+// --- hidden platform -------------------------------------------------------
+//
+// Invisible and non-collidable until the mystery block triggers it, then
+// fades from translucent to opaque over HIDDEN_PLATFORM_APPEAR_MS. Its
+// world position never changes --- only its opacity --- so the visual and
+// the (separately computed) collision rectangle always agree.
+
+function drawHiddenPlatform(state: HiddenPlatformState, cameraX: number, elapsedMs: number): void {
+  const progress = hiddenPlatformProgress(state, elapsedMs);
+  if (progress <= 0) return;
+  const screenX = state.x - cameraX;
+  if (screenX + state.width < 0 || screenX > PHYSICS.CANVAS_WIDTH) return;
+
+  const c = ctx!;
+  const rise = (1 - progress) * 10; // settles into place from slightly below
+  const y = state.y + rise;
+  const solid = isHiddenPlatformSolid(state, elapsedMs);
+
+  c.globalAlpha = 0.25 + progress * 0.75;
+  c.fillStyle = solid ? PLATFORM_TOP : "#7fd8ff";
+  c.fillRect(screenX, y, state.width, 4);
+  c.fillStyle = solid ? PLATFORM_BODY : "#3d8fae";
+  c.fillRect(screenX, y + 4, state.width, state.height - 4);
+  c.globalAlpha = 1;
+}
+
+// --- particles --------------------------------------------------------
+
+function drawParticles(particles: Particle[], cameraX: number, elapsedMs: number): void {
+  const c = ctx!;
+  for (const particle of particles) {
+    const age = (elapsedMs - particle.spawnedAt) / 1000;
+    if (age < 0) continue;
+    const fade = 1 - (elapsedMs - particle.spawnedAt) / particle.life;
+    if (fade <= 0) continue;
+
+    const worldX = particle.x + particle.vx * age;
+    const worldY = particle.y + particle.vy * age + 0.5 * 900 * age * age;
+    const screenX = worldX - cameraX;
+
+    c.globalAlpha = Math.max(0, fade);
+    c.fillStyle = particle.kind === "spark" ? "#7fe8ff" : "#8a7fa0";
+    const size = particle.kind === "spark" ? 3 : 4;
+    c.fillRect(screenX - size / 2, worldY - size / 2, size, size);
+  }
+  c.globalAlpha = 1;
 }
 
 function drawPlayer(state: PlayerState, cameraX: number): void {
