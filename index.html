@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COMP4020 prototype</title>
+    <title>Pixel Explorer --- COMP4020 crit 5 prototype</title>
     <meta
       name="description"
-      content="Replace this with one sentence saying what this page is. A search result and a link preview both show it."
+      content="A blocky pixel-art platformer prototype: canvas rendering, keyboard movement, and variable-height jump physics."
     />
 
     <!--
@@ -27,12 +27,11 @@
       </nav>
     </header>
     <main>
-      <h1>COMP4020 prototype</h1>
-      <p>
-        Replace this with your prototype. This week's brief is on the course website;
-        <code>spec/README.md</code> explains how the checks in this repo relate to it.
-      </p>
+      <h1>Pixel Explorer</h1>
+      <div id="game-wrap">
+        <canvas id="game-canvas" aria-label="Pixel Explorer game canvas"></canvas>
+      </div>
     </main>
-    <script type="module" src="./main.ts"></script>
+    <script type="module" src="./game.ts"></script>
   </body>
 </html>
