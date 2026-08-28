@@ -26,7 +26,18 @@ import {
   type PlayerState,
   type Pose,
 } from "./game-core.ts";
-import { isMuted, playBrickBreak, playJump, playLand, playLose, playMysteryTrigger, playStomp, playWin, toggleMute } from "./audio.ts";
+import {
+  isMuted,
+  playBrickBreak,
+  playJump,
+  playLand,
+  playLose,
+  playMysteryTrigger,
+  playStomp,
+  playWin,
+  startMusic,
+  toggleMute,
+} from "./audio.ts";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas");
 if (!canvas) throw new Error("missing #game-canvas");
@@ -47,6 +58,7 @@ function refreshMuteButton(): void {
 }
 refreshMuteButton();
 muteButton.addEventListener("click", () => {
+  startMusic();
   toggleMute();
   refreshMuteButton();
 });
@@ -73,6 +85,7 @@ function isControlKey(code: string): boolean {
 }
 
 window.addEventListener("keydown", (event) => {
+  startMusic();
   if (isControlKey(event.code)) event.preventDefault();
   if (LEFT_KEYS.has(event.code)) keys.left = true;
   if (RIGHT_KEYS.has(event.code)) keys.right = true;

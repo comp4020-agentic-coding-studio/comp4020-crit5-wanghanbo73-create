@@ -28,6 +28,7 @@ export function isMuted(): boolean {
 export function toggleMute(): boolean {
   const next = !isMuted();
   localStorage.setItem(MUTE_KEY, next ? "1" : "0");
+  if (musicGain && ctx) musicGain.gain.setValueAtTime(next ? 0 : MUSIC_VOLUME, ctx.currentTime);
   return next;
 }
 
@@ -116,4 +117,72 @@ export function playWin(): void {
   playTone(523, 110, "square", 0.12, undefined, 0);
   playTone(659, 110, "square", 0.12, undefined, 110);
   playTone(784, 220, "square", 0.14, undefined, 220);
+}
+
+// --- background music --------------------------------------------------
+//
+// A short, slow, minor-key triangle-wave loop --- deliberately understated
+// so it sits behind the sound effects rather than competing with them. It
+// runs on its own gain node (rather than checking isMuted() per note) so
+// toggling mute just silences that one node instantly, with no need to stop
+// and restart the note-scheduling loop.
+
+const MUSIC_VOLUME = 0.05;
+
+// One bar, repeated --- frequencies in Hz, each held for `beatMs`. A fixed,
+// hand-picked sequence (no Math.random): it must sound the same on every
+// loop pass and every page load.
+const MELODY: { freq: number; beats: number }[] = [
+  { freq: 392.0, beats: 1 }, // G4
+  { freq: 349.23, beats: 1 }, // F4
+  { freq: 311.13, beats: 1 }, // Eb4
+  { freq: 349.23, beats: 1 }, // F4
+  { freq: 392.0, beats: 1 }, // G4
+  { freq: 466.16, beats: 1 }, // Bb4
+  { freq: 392.0, beats: 2 }, // G4, held
+];
+const BEAT_MS = 480;
+
+let musicGain: GainNode | null = null;
+let musicStarted = false;
+
+function playMusicNote(audio: AudioContext, freq: number, startTime: number, durationSec: number): void {
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(freq, startTime);
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(1, startTime + 0.03);
+  gain.gain.setValueAtTime(1, startTime + durationSec * 0.6);
+  gain.gain.linearRampToValueAtTime(0, startTime + durationSec);
+  osc.connect(gain);
+  gain.connect(musicGain!);
+  osc.start(startTime);
+  osc.stop(startTime + durationSec + 0.02);
+}
+
+function scheduleMusicLoop(audio: AudioContext): void {
+  let t = audio.currentTime + 0.05;
+  for (const note of MELODY) {
+    const durationSec = (note.beats * BEAT_MS) / 1000;
+    playMusicNote(audio, note.freq, t, durationSec * 0.92);
+    t += durationSec;
+  }
+  const loopMs = MELODY.reduce((sum, note) => sum + note.beats * BEAT_MS, 0);
+  setTimeout(() => scheduleMusicLoop(audio), loopMs);
+}
+
+// Starts the looping background music. Idempotent, and safe to call from
+// several different input handlers --- only the first call (which must
+// happen inside a user-gesture handler, per browser autoplay policy) does
+// anything.
+export function startMusic(): void {
+  if (musicStarted) return;
+  const audio = getContext();
+  if (!audio) return;
+  musicStarted = true;
+  musicGain = audio.createGain();
+  musicGain.gain.value = isMuted() ? 0 : MUSIC_VOLUME;
+  musicGain.connect(audio.destination);
+  scheduleMusicLoop(audio);
 }
