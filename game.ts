@@ -12,11 +12,13 @@ import {
   poseFor,
   updateGame,
   type BrickState,
+  type EnemyState,
   type GameState,
   type HiddenPlatformState,
   type InputState,
   type MysteryBlockState,
   type Particle,
+  type Platform,
   type PlayerState,
 } from "./game-core.ts";
 
@@ -24,7 +26,10 @@ const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas");
 if (!canvas) throw new Error("missing #game-canvas");
 const loseOverlay = document.querySelector<HTMLDivElement>("#lose-overlay");
 const restartButton = document.querySelector<HTMLButtonElement>("#restart-button");
+const winOverlay = document.querySelector<HTMLDivElement>("#win-overlay");
+const winRestartButton = document.querySelector<HTMLButtonElement>("#win-restart-button");
 if (!loseOverlay || !restartButton) throw new Error("missing lose-overlay markup");
+if (!winOverlay || !winRestartButton) throw new Error("missing win-overlay markup");
 
 // The canvas's internal resolution is the fixed logical playfield; CSS scales
 // its on-page size, but every physics number in game-core.ts is expressed in
@@ -77,6 +82,7 @@ function restart(): void {
 }
 
 restartButton.addEventListener("click", restart);
+winRestartButton.addEventListener("click", restart);
 
 function tick(time: number): void {
   if (lastTime === null) lastTime = time;
@@ -93,6 +99,7 @@ function tick(time: number): void {
 
   game = updateGame(game, input, dt);
   loseOverlay!.hidden = game.status !== "LOSE";
+  winOverlay!.hidden = game.status !== "WIN";
   render(game);
 
   requestAnimationFrame(tick);
@@ -160,10 +167,12 @@ function render(state: GameState): void {
   drawParallaxLayer(FAR_LAYER, FAR_FACTOR, cameraX, "#5c6f9e"); // distant mountains
   drawParallaxLayer(MID_LAYER, MID_FACTOR, cameraX, "#3d4f66"); // ruined-tower silhouettes
   drawLevel(cameraX);
+  drawGoal(LEVEL.goal, cameraX, state.elapsedMs, state.status === "WIN", state.winAt);
   drawLava(cameraX, state.elapsedMs);
   drawBricks(state.bricks, cameraX);
   drawHiddenPlatform(state.hiddenPlatform, cameraX, state.elapsedMs);
   drawMysteryBlock(state.mysteryBlock, cameraX, state.elapsedMs);
+  drawEnemy(state.enemy, cameraX, state.elapsedMs);
   drawParallaxLayer(NEAR_LAYER, NEAR_FACTOR, cameraX, "#3f7a2e"); // foreground grass tufts
   drawPlayer(state.player, cameraX);
   drawParticles(state.particles, cameraX, state.elapsedMs);
@@ -382,6 +391,127 @@ function drawHiddenPlatform(state: HiddenPlatformState, cameraX: number, elapsed
   c.fillStyle = solid ? PLATFORM_BODY : "#3d8fae";
   c.fillRect(screenX, y + 4, state.width, state.height - 4);
   c.globalAlpha = 1;
+}
+
+// --- enemy ---------------------------------------------------------------
+//
+// An original ruins-guardian silhouette --- a squat stone block with a
+// single glowing eye, deliberately not a Goomba/Creeper likeness. Bobs
+// gently while patrolling, the eye sits toward whichever way it's facing,
+// and it squashes flat then flickers away once stomped. Purely cosmetic
+// (the outline/glow never affects the collision box computed in
+// game-core.ts).
+
+function drawEnemy(enemy: EnemyState, cameraX: number, elapsedMs: number): void {
+  const c = ctx!;
+  const screenX = enemy.x - cameraX;
+  if (screenX + enemy.width < -20 || screenX > PHYSICS.CANVAS_WIDTH + 20) return;
+
+  if (!enemy.alive) {
+    const age = enemy.stompedAt === null ? 0 : elapsedMs - enemy.stompedAt;
+    const squashDuration = 160;
+    const fadeDuration = 300;
+    if (age > squashDuration + fadeDuration) return; // fully gone, nothing left to draw
+
+    if (age <= squashDuration) {
+      const progress = age / squashDuration;
+      const h = enemy.height * (1 - progress * 0.75);
+      const w = enemy.width * (1 + progress * 0.4);
+      const y = enemy.y + enemy.height - h;
+      const x = screenX - (w - enemy.width) / 2;
+      c.fillStyle = "#4a4658";
+      c.fillRect(x, y, w, h);
+    } else {
+      const progress = (age - squashDuration) / fadeDuration;
+      c.globalAlpha = Math.max(0, 1 - progress);
+      if (Math.sin(age * 0.09) > 0) {
+        c.fillStyle = "#4a4658";
+        c.fillRect(screenX, enemy.y + enemy.height * 0.4, enemy.width, enemy.height * 0.6);
+      }
+      c.globalAlpha = 1;
+    }
+    return;
+  }
+
+  const t = elapsedMs / 1000;
+  const bob = Math.sin(t * 5) * 2;
+  const y = enemy.y + bob;
+
+  c.fillStyle = "#1c1a24"; // dark outline
+  c.fillRect(screenX - 1, y - 1, enemy.width + 2, enemy.height + 2);
+
+  c.fillStyle = "#5a5568"; // body
+  c.fillRect(screenX, y, enemy.width, enemy.height);
+  c.fillStyle = "#726c85"; // top highlight
+  c.fillRect(screenX, y, enemy.width, 4);
+  c.fillStyle = "#332f3d"; // bottom shadow
+  c.fillRect(screenX, y + enemy.height - 4, enemy.width, 4);
+
+  const eyeSize = 8;
+  const eyeY = y + enemy.height * 0.35;
+  const eyeX = enemy.direction > 0 ? screenX + enemy.width - eyeSize - 4 : screenX + 4;
+  const pulse = 0.6 + Math.sin(t * 6) * 0.4;
+  c.fillStyle = `rgba(230, 60, 70, ${0.7 + pulse * 0.3})`;
+  c.fillRect(eyeX, eyeY, eyeSize, eyeSize);
+  c.fillStyle = "#fff2c8";
+  c.fillRect(eyeX + eyeSize * 0.3, eyeY + eyeSize * 0.3, eyeSize * 0.3, eyeSize * 0.3);
+}
+
+// --- goal portal -----------------------------------------------------------
+//
+// An original glowing ruins-exit --- an energy ring with an orbiting-particle
+// halo, deliberately not a flagpole/castle likeness. The glow/orbit extends
+// well past the actual collision body; only touching the solid frame itself
+// triggers WIN (checked purely in game-core.ts, independent of this glow).
+
+function drawGoal(goal: Platform, cameraX: number, elapsedMs: number, won: boolean, winAt: number | null): void {
+  const c = ctx!;
+  const screenX = goal.x - cameraX;
+  if (screenX + goal.width < -120 || screenX > PHYSICS.CANVAS_WIDTH + 120) return;
+
+  const t = elapsedMs / 1000;
+  const cx = screenX + goal.width / 2;
+  const cy = goal.y + goal.height / 2;
+
+  const glowR = goal.width * 1.4 + Math.sin(t * 3) * 6;
+  const glow = c.createRadialGradient(cx, cy, 4, cx, cy, glowR);
+  glow.addColorStop(0, "rgba(140, 230, 255, 0.55)");
+  glow.addColorStop(1, "rgba(140, 230, 255, 0)");
+  c.fillStyle = glow;
+  c.beginPath();
+  c.arc(cx, cy, glowR, 0, Math.PI * 2);
+  c.fill();
+
+  for (let i = 0; i < 6; i++) {
+    const angle = t * 1.6 + (i / 6) * Math.PI * 2;
+    const orbitR = goal.width * 0.9;
+    const px = cx + Math.cos(angle) * orbitR;
+    const py = cy + Math.sin(angle) * orbitR * 0.5;
+    c.fillStyle = "rgba(255, 235, 160, 0.85)";
+    c.fillRect(px - 2, py - 2, 4, 4);
+  }
+
+  c.fillStyle = "#241733"; // portal frame, roughly matching the collision body
+  c.fillRect(screenX, goal.y, goal.width, goal.height);
+
+  const coreAlpha = won ? 1 : 0.85;
+  const spin = t * 2;
+  for (let ring = 0; ring < 3; ring++) {
+    const inset = ring * 6;
+    const hue = 190 + ring * 20;
+    c.strokeStyle = `hsla(${hue}, 90%, 65%, ${coreAlpha - ring * 0.2})`;
+    c.lineWidth = 2;
+    c.beginPath();
+    c.ellipse(cx, cy, Math.max(2, goal.width / 2 - inset), Math.max(2, goal.height / 2 - inset), spin + ring, 0, Math.PI * 2);
+    c.stroke();
+  }
+
+  if (won && winAt !== null) {
+    const age = elapsedMs - winAt;
+    const flash = Math.max(0, 1 - age / 600);
+    c.fillStyle = `rgba(255, 255, 255, ${flash * 0.8})`;
+    c.fillRect(screenX, goal.y, goal.width, goal.height);
+  }
 }
 
 // --- particles --------------------------------------------------------

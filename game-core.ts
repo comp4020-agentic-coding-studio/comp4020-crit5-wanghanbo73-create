@@ -22,7 +22,7 @@ const EPS = 0.01;
 
 // --- world & level ------------------------------------------------------
 
-export const WORLD_WIDTH = 3600;
+export const WORLD_WIDTH = 2700;
 
 // Feet position when standing on ground-height terrain.
 export const GROUND_Y = PHYSICS.CANVAS_HEIGHT - PHYSICS.GROUND_HEIGHT;
@@ -77,6 +77,20 @@ export interface HiddenPlatformState extends Platform {
   triggeredAt: number | null;
 }
 
+export interface EnemyState {
+  x: number; // world x, left edge
+  y: number; // world y, top surface (it always walks the ground, feet at y+height)
+  width: number;
+  height: number;
+  vx: number;
+  direction: 1 | -1;
+  patrolMinX: number;
+  patrolMaxX: number;
+  alive: boolean;
+  stomped: boolean; // true while playing its squash/disappear animation
+  stompedAt: number | null; // absolute GameState.elapsedMs when stomped, or null
+}
+
 export interface Particle {
   x: number;
   y: number;
@@ -87,6 +101,15 @@ export interface Particle {
   kind: "spark" | "fragment";
 }
 
+export interface EnemyConfig {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  patrolMinX: number;
+  patrolMaxX: number;
+}
+
 export interface Level {
   worldWidth: number;
   platforms: Platform[];
@@ -95,15 +118,19 @@ export interface Level {
   mysteryBlock: Platform;
   bricks: Platform[];
   hiddenPlatform: Platform;
+  enemy: EnemyConfig;
+  goal: Platform;
 }
 
 // Layout, left to right: safe start, an original mystery block (hittable
 // from below with a normal jump), three independently-destructible bricks,
-// a lava trench sized so a full-hold jump clears it fairly, a safe landing
-// stretch, then space reserved for a later stage's enemies/high platforms
-// and eventual goal. The mystery block, bricks and hidden platform all float
-// above the continuous ground, so the lower route (just run and long-jump
-// the lava) always exists no matter what happens to them.
+// a lava trench sized so a full-hold jump clears it fairly, a generous safe
+// landing/reaction stretch, a slow patrolling enemy with room to jump over
+// or stomp it, another run-up stretch, a tall step that only a full-hold
+// jump reliably reaches, and finally the goal portal. The mystery block,
+// bricks and hidden platform all float above the continuous ground, so the
+// lower route (just run and long-jump the lava) always exists no matter
+// what happens to them.
 function buildLevel(): Level {
   const mysteryBlock: Platform = { x: 460, y: GROUND_Y - 160, width: 40, height: 30 };
 
@@ -135,9 +162,44 @@ function buildLevel(): Level {
     height: brickHeight,
   };
 
+  // Enemy patrol zone: starts a generous 350px past the far lip of the lava
+  // (roughly 1.5s of run speed) so landing/reacting is never rushed, and
+  // patrols a 240px range well clear of both the lava and the high platform.
+  const enemyWidth = 36;
+  const enemyHeight = 40;
+  const patrolMinX = pitEnd + 350;
+  const patrolMaxX = patrolMinX + 240;
+  const enemy: EnemyConfig = {
+    x: (patrolMinX + patrolMaxX) / 2 - enemyWidth / 2,
+    y: GROUND_Y - enemyHeight,
+    width: enemyWidth,
+    height: enemyHeight,
+    patrolMinX,
+    patrolMaxX,
+  };
+
+  // Another 350px run-up past the patrol zone before the high step, so
+  // clearing the enemy never dumps the player straight into a wall.
+  const highPlatformHeight = 145; // a short tap (~100px) clearly fails; a
+  // reasonable long-press (~150px+) clears it with margin --- measured
+  // against createInitialPlayerState()'s own jump physics, not tuned blind.
+  const highPlatformX = patrolMaxX + 350;
+  const highPlatformWidth = 250;
+  const highPlatform: Platform = {
+    x: highPlatformX,
+    y: GROUND_Y - highPlatformHeight,
+    width: highPlatformWidth,
+    height: highPlatformHeight,
+  };
+  const highPlatformEndX = highPlatformX + highPlatformWidth;
+
+  // The goal sits at ground level, a safe landing past the high platform.
+  const goal: Platform = { x: highPlatformEndX + 150, y: GROUND_Y - 90, width: 50, height: 90 };
+
   const platforms: Platform[] = [
     { x: 0, y: GROUND_Y, width: pitStart, height: PHYSICS.GROUND_HEIGHT },
     { x: pitEnd, y: GROUND_Y, width: WORLD_WIDTH - pitEnd, height: PHYSICS.GROUND_HEIGHT },
+    highPlatform,
   ];
 
   return {
@@ -148,6 +210,8 @@ function buildLevel(): Level {
     mysteryBlock,
     bricks,
     hiddenPlatform,
+    enemy,
+    goal,
   };
 }
 
@@ -207,6 +271,23 @@ export function createInitialBrickStates(level: Level = LEVEL): BrickState[] {
 
 export function createInitialHiddenPlatformState(level: Level = LEVEL): HiddenPlatformState {
   return { ...level.hiddenPlatform, triggeredAt: null };
+}
+
+export function createInitialEnemyState(level: Level = LEVEL): EnemyState {
+  const enemy = level.enemy;
+  return {
+    x: enemy.x,
+    y: enemy.y,
+    width: enemy.width,
+    height: enemy.height,
+    vx: ENEMY_SPEED,
+    direction: 1,
+    patrolMinX: enemy.patrolMinX,
+    patrolMaxX: enemy.patrolMaxX,
+    alive: true,
+    stomped: false,
+    stompedAt: null,
+  };
 }
 
 export function hiddenPlatformProgress(state: HiddenPlatformState, elapsedMs: number): number {
@@ -377,6 +458,111 @@ function headHitUnderside(prev: PlayerState, next: PlayerState, rect: Platform):
   return movingUp && wasBelow && snappedToUnderside && horizontallyAligned;
 }
 
+// --- enemy: patrol AI and stomp/side collision ---------------------------
+
+export const ENEMY_SPEED = 60; // px/s --- deliberately slow, easy to read and predict
+export const ENEMY_STOMP_BOUNCE = -500; // px/s, upward --- a clear bounce, shy of a full jump
+export const ENEMY_STOMP_TOP_TOLERANCE = 10; // px of slack for a fair "landed on top" read
+
+/** Patrols within its fixed range, reversing at the range's edges, at any
+ * solid wall/platform side, and before ever stepping into a lava pit ---
+ * pure world-coordinate math, so camera movement can never affect it. Frozen
+ * forever once dead (the caller only invokes this while PLAYING, and a dead
+ * enemy just stops). */
+export function updateEnemy(enemy: EnemyState, dt: number, level: Level = LEVEL): EnemyState {
+  if (!enemy.alive) return enemy;
+
+  let direction = enemy.direction;
+  let x = enemy.x + direction * ENEMY_SPEED * dt;
+
+  if (x < enemy.patrolMinX) {
+    x = enemy.patrolMinX;
+    direction = 1;
+  } else if (x + enemy.width > enemy.patrolMaxX) {
+    x = enemy.patrolMaxX - enemy.width;
+    direction = -1;
+  }
+
+  const top = enemy.y;
+  const bottom = enemy.y + enemy.height;
+  for (const platform of level.platforms) {
+    if (!overlaps(top, bottom, platform.y, platform.y + platform.height)) continue;
+    const left = x;
+    const right = x + enemy.width;
+    if (!overlaps(left, right, platform.x, platform.x + platform.width)) continue;
+    if (direction > 0) {
+      x = platform.x - enemy.width;
+      direction = -1;
+    } else {
+      x = platform.x + platform.width;
+      direction = 1;
+    }
+  }
+
+  // Reverse the instant its leading edge would step into a lava pit, rather
+  // than reacting after already overlapping it --- it must never walk in.
+  for (const pit of level.pits) {
+    const pitLeft = pit.x;
+    const pitRight = pit.x + pit.width;
+    const prevLeadingEdge = direction > 0 ? enemy.x + enemy.width : enemy.x;
+    const nextLeadingEdge = direction > 0 ? x + enemy.width : x;
+    if (direction > 0 && prevLeadingEdge <= pitLeft && nextLeadingEdge > pitLeft) {
+      x = pitLeft - enemy.width;
+      direction = -1;
+    } else if (direction < 0 && prevLeadingEdge >= pitRight && nextLeadingEdge < pitRight) {
+      x = pitRight;
+      direction = 1;
+    }
+  }
+
+  return { ...enemy, x, direction, vx: direction * ENEMY_SPEED };
+}
+
+export type EnemyCollisionResult = "none" | "stomp" | "hit";
+
+/** Distinguishes a top-down stomp from a dangerous side/underside hit. A
+ * stomp requires ALL of: the enemy still alive, the player currently
+ * falling, the player's *previous* frame bottom already at/within a small
+ * tolerance of the enemy's top (so it reads as landing from above, not
+ * clipping in from the side), and a genuine AABB overlap this frame. Any
+ * other overlap with a living enemy is a dangerous hit. Pure position
+ * comparison, mirroring headHitUnderside's approach but for the opposite
+ * (top) face. */
+export function checkEnemyCollision(
+  prevPlayer: PlayerState,
+  nextPlayer: PlayerState,
+  enemy: EnemyState,
+): EnemyCollisionResult {
+  if (!enemy.alive) return "none";
+
+  const enemyLeft = enemy.x;
+  const enemyRight = enemy.x + enemy.width;
+  const enemyTop = enemy.y;
+  const enemyBottom = enemy.y + enemy.height;
+
+  const nextLeft = nextPlayer.x;
+  const nextRight = nextPlayer.x + PHYSICS.PLAYER_WIDTH;
+  const nextTop = nextPlayer.y - PHYSICS.PLAYER_HEIGHT;
+  const nextBottom = nextPlayer.y;
+
+  const currentlyOverlapping =
+    overlaps(nextLeft, nextRight, enemyLeft, enemyRight) && overlaps(nextTop, nextBottom, enemyTop, enemyBottom);
+  if (!currentlyOverlapping) return "none";
+
+  const falling = nextPlayer.vy > 0;
+  const wasAboveEnemyTop = prevPlayer.y <= enemyTop + ENEMY_STOMP_TOP_TOLERANCE;
+
+  return falling && wasAboveEnemyTop ? "stomp" : "hit";
+}
+
+function overlapsGoal(player: PlayerState, goal: Platform): boolean {
+  const left = player.x;
+  const right = player.x + PHYSICS.PLAYER_WIDTH;
+  const top = player.y - PHYSICS.PLAYER_HEIGHT;
+  const bottom = player.y;
+  return overlaps(left, right, goal.x, goal.x + goal.width) && overlaps(top, bottom, goal.y, goal.y + goal.height);
+}
+
 function spawnBurst(
   rect: Platform,
   elapsedMs: number,
@@ -405,7 +591,7 @@ function spawnBurst(
 
 // --- overall game state -------------------------------------------------
 
-export type GameStatus = "PLAYING" | "LOSE";
+export type GameStatus = "PLAYING" | "WIN" | "LOSE";
 
 export interface GameState {
   player: PlayerState;
@@ -416,6 +602,8 @@ export interface GameState {
   bricks: BrickState[];
   hiddenPlatform: HiddenPlatformState;
   particles: Particle[];
+  enemy: EnemyState;
+  winAt: number | null; // absolute GameState.elapsedMs when the goal was reached, or null
 }
 
 export function createInitialGameState(level: Level = LEVEL): GameState {
@@ -428,18 +616,21 @@ export function createInitialGameState(level: Level = LEVEL): GameState {
     bricks: createInitialBrickStates(level),
     hiddenPlatform: createInitialHiddenPlatformState(level),
     particles: [],
+    enemy: createInitialEnemyState(level),
+    winAt: null,
   };
 }
 
-/** Advances the whole game one frame. Once status is LOSE, input and physics
- * both freeze --- restart is the only way out (see createInitialGameState). */
+/** Advances the whole game one frame. Once status is WIN or LOSE, input and
+ * physics both freeze --- restart is the only way out (see
+ * createInitialGameState). */
 export function updateGame(
   state: GameState,
   input: InputState,
   rawDt: number,
   level: Level = LEVEL,
 ): GameState {
-  if (state.status === "LOSE") return state;
+  if (state.status !== "PLAYING") return state;
 
   const dt = clampDeltaTime(rawDt);
   const elapsedMs = state.elapsedMs + dt * 1000;
@@ -459,7 +650,7 @@ export function updateGame(
     ],
   };
 
-  const player = updatePlayer(state.player, input, dt, effectiveLevel);
+  let player = updatePlayer(state.player, input, dt, effectiveLevel);
 
   let mysteryBlock = state.mysteryBlock;
   let hiddenPlatform = state.hiddenPlatform;
@@ -484,16 +675,35 @@ export function updateGame(
     }
   }
 
-  particles = particles.filter((particle) => elapsedMs - particle.spawnedAt < particle.life);
-
-  const cameraX = updateCamera(state.cameraX, player.x, dt, level);
+  let enemy = updateEnemy(state.enemy, dt, level);
 
   const touchingLava = level.pits.some((pit) => {
     const overlapsX = overlaps(player.x, player.x + PHYSICS.PLAYER_WIDTH, pit.x, pit.x + pit.width);
     return overlapsX && player.y >= pit.surfaceY;
   });
 
-  const status: GameStatus = player.y > DEATH_Y || touchingLava ? "LOSE" : "PLAYING";
+  let status: GameStatus = player.y > DEATH_Y || touchingLava ? "LOSE" : "PLAYING";
+  let winAt = state.winAt;
 
-  return { player, cameraX, status, elapsedMs, mysteryBlock, bricks, hiddenPlatform, particles };
+  if (status === "PLAYING" && enemy.alive) {
+    const collision = checkEnemyCollision(state.player, player, enemy);
+    if (collision === "stomp") {
+      enemy = { ...enemy, alive: false, stomped: true, stompedAt: elapsedMs, vx: 0 };
+      player = { ...player, vy: ENEMY_STOMP_BOUNCE, grounded: false, jumping: false };
+      particles = [...particles, ...spawnBurst(enemy, elapsedMs, 6, "fragment", 80, Math.PI / 6)];
+    } else if (collision === "hit") {
+      status = "LOSE";
+    }
+  }
+
+  if (status === "PLAYING" && overlapsGoal(player, level.goal)) {
+    status = "WIN";
+    winAt = elapsedMs;
+  }
+
+  particles = particles.filter((particle) => elapsedMs - particle.spawnedAt < particle.life);
+
+  const cameraX = updateCamera(state.cameraX, player.x, dt, level);
+
+  return { player, cameraX, status, elapsedMs, mysteryBlock, bricks, hiddenPlatform, particles, enemy, winAt };
 }

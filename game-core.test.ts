@@ -13,6 +13,7 @@ import {
   updateCamera,
   updateGame,
   updatePlayer,
+  type EnemyState,
   type GameState,
   type InputState,
   type Level,
@@ -55,6 +56,8 @@ function levelWith(platforms: Platform[], worldWidth = 2000): Level {
     mysteryBlock: { x: -1000, y: -1000, width: 0, height: 0 },
     bricks: [],
     hiddenPlatform: { x: -1000, y: -1000, width: 0, height: 0 },
+    enemy: { x: -1000, y: -1000, width: 0, height: 0, patrolMinX: -1000, patrolMaxX: -1000 },
+    goal: { x: -1000, y: -1000, width: 0, height: 0 },
   };
 }
 
@@ -426,6 +429,97 @@ describe("destructible bricks", () => {
     falling = updateGame(falling, NO_INPUT, FRAME);
     expect(falling.player.grounded).toBe(false);
     expect(falling.player.y).toBeGreaterThan(brick.y);
+  });
+});
+
+describe("enemy stomp and side collision", () => {
+  function stompSetup(): GameState {
+    const base = createInitialGameState();
+    const enemy: EnemyState = base.enemy;
+    return {
+      ...base,
+      player: {
+        ...base.player,
+        x: enemy.x + enemy.width / 2 - PHYSICS.PLAYER_WIDTH / 2,
+        y: enemy.y, // previous-frame bottom sits right at the enemy's top
+        vy: 300, // falling
+        grounded: false,
+      },
+    };
+  }
+
+  it("stomping an enemy from above bounces the player and keeps the game PLAYING", () => {
+    const state = stompSetup();
+    const next = updateGame(state, NO_INPUT, FRAME);
+
+    expect(next.enemy.alive).toBe(false);
+    expect(next.player.vy).toBeLessThan(0);
+    expect(next.status).toBe("PLAYING");
+    expect(next.status).not.toBe("LOSE");
+  });
+
+  it("colliding with an enemy from the side causes LOSE without killing it", () => {
+    const base = createInitialGameState();
+    const enemy: EnemyState = base.enemy;
+    const state: GameState = {
+      ...base,
+      player: {
+        ...base.player,
+        x: enemy.x - PHYSICS.PLAYER_WIDTH + 5, // overlapping from the left
+        y: enemy.y + enemy.height, // level with the enemy's own footing, not falling onto its top
+        vy: 0,
+        grounded: true,
+      },
+    };
+    const next = updateGame(state, NO_INPUT, FRAME);
+
+    expect(next.status).toBe("LOSE");
+    expect(next.enemy.alive).toBe(true);
+    expect(next.player.vy).not.toBeLessThan(0);
+  });
+
+  it("a stomped enemy cannot be stomped or fought twice", () => {
+    let state = stompSetup();
+    state = updateGame(state, NO_INPUT, FRAME);
+    expect(state.enemy.alive).toBe(false);
+
+    // Drive the (now airborne, bounced) player straight back down through
+    // where the enemy still visually sits --- it must not damage or re-kill it.
+    for (let i = 0; i < 60 && state.status === "PLAYING"; i++) {
+      state = updateGame(state, NO_INPUT, FRAME);
+    }
+    expect(state.status).toBe("PLAYING");
+    expect(state.enemy.alive).toBe(false);
+  });
+});
+
+describe("goal portal", () => {
+  it("touching the goal's collision body wins the game, but staying away from it doesn't", () => {
+    const base = createInitialGameState();
+    const goal = LEVEL.goal;
+
+    const touching: GameState = {
+      ...base,
+      player: { ...base.player, x: goal.x + 5, y: goal.y + goal.height, vy: 0, grounded: true },
+    };
+    expect(updateGame(touching, NO_INPUT, FRAME).status).toBe("WIN");
+
+    const farAway: GameState = {
+      ...base,
+      player: { ...base.player, x: goal.x - PHYSICS.PLAYER_WIDTH - 80, y: goal.y + goal.height, vy: 0, grounded: true },
+    };
+    expect(updateGame(farAway, NO_INPUT, FRAME).status).toBe("PLAYING");
+  });
+
+  it("cannot become WIN once the game has already been LOST", () => {
+    const base = createInitialGameState();
+    const goal = LEVEL.goal;
+    const lost: GameState = {
+      ...base,
+      status: "LOSE",
+      player: { ...base.player, x: goal.x + 5, y: goal.y + goal.height, vy: 0, grounded: true },
+    };
+    expect(updateGame(lost, NO_INPUT, FRAME).status).toBe("LOSE");
   });
 });
 

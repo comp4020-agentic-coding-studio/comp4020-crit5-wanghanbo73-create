@@ -43,7 +43,8 @@ a {
   image-rendering: crisp-edges;
 }
 
-#lose-overlay {
+#lose-overlay,
+#win-overlay {
   position: absolute;
   inset: 0;
   display: flex;
@@ -51,22 +52,32 @@ a {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  background: rgba(10, 10, 20, 0.72);
   color: #fff;
   text-align: center;
 }
 
-#lose-overlay[hidden] {
+#lose-overlay {
+  background: rgba(10, 10, 20, 0.72);
+}
+
+#win-overlay {
+  background: rgba(20, 30, 45, 0.78);
+}
+
+#lose-overlay[hidden],
+#win-overlay[hidden] {
   display: none;
 }
 
-#lose-overlay p {
+#lose-overlay p,
+#win-overlay p {
   margin: 0;
   font-size: 1.5rem;
   font-weight: 600;
 }
 
-#restart-button {
+#restart-button,
+#win-restart-button {
   font-size: 1.1rem;
   padding: 0.5rem 1.5rem;
   border-radius: 999px;
@@ -76,6 +87,7 @@ a {
   cursor: pointer;
 }
 
-#restart-button:hover {
+#restart-button:hover,
+#win-restart-button:hover {
   background: #e2e2e2;
 }
