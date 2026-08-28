@@ -99,6 +99,7 @@ export interface Particle {
   spawnedAt: number; // absolute GameState.elapsedMs
   life: number; // ms
   kind: "spark" | "fragment";
+  color: string; // rendering hint only --- never read by any game-rule logic
 }
 
 export interface EnemyConfig {
@@ -570,6 +571,7 @@ function spawnBurst(
   kind: Particle["kind"],
   speed: number,
   phase: number,
+  color: string,
 ): Particle[] {
   const cx = rect.x + rect.width / 2;
   const cy = rect.y + rect.height / 2;
@@ -584,6 +586,7 @@ function spawnBurst(
       spawnedAt: elapsedMs,
       life: kind === "spark" ? 500 : 400,
       kind,
+      color,
     });
   }
   return out;
@@ -659,7 +662,7 @@ export function updateGame(
   if (!mysteryBlock.used && headHitUnderside(state.player, player, mysteryBlock)) {
     mysteryBlock = { ...mysteryBlock, used: true, bounceElapsed: 0 };
     hiddenPlatform = { ...hiddenPlatform, triggeredAt: elapsedMs };
-    particles = [...particles, ...spawnBurst(mysteryBlock, elapsedMs, 6, "spark", 90, 0)];
+    particles = [...particles, ...spawnBurst(mysteryBlock, elapsedMs, 6, "spark", 90, 0, "#39e6e6")];
   } else if (mysteryBlock.used) {
     mysteryBlock = { ...mysteryBlock, bounceElapsed: mysteryBlock.bounceElapsed + dt * 1000 };
   }
@@ -671,7 +674,7 @@ export function updateGame(
       bricks = bricks.map((existing, idx) =>
         idx === i ? { ...existing, destroyed: true, destroyedAt: elapsedMs } : existing,
       );
-      particles = [...particles, ...spawnBurst(brick, elapsedMs, 4, "fragment", 70, Math.PI / 4)];
+      particles = [...particles, ...spawnBurst(brick, elapsedMs, 4, "fragment", 70, Math.PI / 4, "#8a7fa0")];
     }
   }
 
@@ -690,7 +693,7 @@ export function updateGame(
     if (collision === "stomp") {
       enemy = { ...enemy, alive: false, stomped: true, stompedAt: elapsedMs, vx: 0 };
       player = { ...player, vy: ENEMY_STOMP_BOUNCE, grounded: false, jumping: false };
-      particles = [...particles, ...spawnBurst(enemy, elapsedMs, 6, "fragment", 80, Math.PI / 6)];
+      particles = [...particles, ...spawnBurst(enemy, elapsedMs, 6, "fragment", 80, Math.PI / 6, "#a664d8")];
     } else if (collision === "hit") {
       status = "LOSE";
     }
