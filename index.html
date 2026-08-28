@@ -29,7 +29,13 @@
     <main>
       <h1>Pixel Explorer</h1>
       <div id="game-wrap">
-        <canvas id="game-canvas" aria-label="Pixel Explorer game canvas"></canvas>
+        <div id="game-frame">
+          <canvas id="game-canvas" aria-label="Pixel Explorer game canvas"></canvas>
+          <div id="lose-overlay" hidden>
+            <p>You fell.</p>
+            <button id="restart-button" type="button">Restart</button>
+          </div>
+        </div>
       </div>
     </main>
     <script type="module" src="./game.ts"></script>

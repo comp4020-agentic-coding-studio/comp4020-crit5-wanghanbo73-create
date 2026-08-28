@@ -28,12 +28,54 @@ a {
   box-sizing: border-box;
 }
 
+#game-frame {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+}
+
 #game-canvas {
   display: block;
   width: 100%;
-  max-width: 960px;
   aspect-ratio: 960 / 540;
   background: #000;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+}
+
+#lose-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: rgba(10, 10, 20, 0.72);
+  color: #fff;
+  text-align: center;
+}
+
+#lose-overlay[hidden] {
+  display: none;
+}
+
+#lose-overlay p {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+#restart-button {
+  font-size: 1.1rem;
+  padding: 0.5rem 1.5rem;
+  border-radius: 999px;
+  border: none;
+  background: #fff;
+  color: #1a1a1a;
+  cursor: pointer;
+}
+
+#restart-button:hover {
+  background: #e2e2e2;
 }
