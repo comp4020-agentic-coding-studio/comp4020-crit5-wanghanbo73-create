@@ -28,20 +28,34 @@ header {
   border: 0;
 }
 
-nav a {
+nav a,
+.pixel-btn {
   display: inline-block;
   font-size: 0.75rem;
+  font-family: inherit;
   color: #cbb8a8;
   text-decoration: none;
   border: 2px solid #4f4258;
   background: #2a1f30;
   padding: 0.2rem 0.6rem;
   border-radius: 0;
+  cursor: pointer;
 }
 
-nav a:hover {
+nav a:hover,
+.pixel-btn:hover {
   background: #3a2c44;
   color: #fdf6e3;
+}
+
+nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pixel-btn[aria-pressed="true"] {
+  color: #7a6a84;
 }
 
 #game-wrap {

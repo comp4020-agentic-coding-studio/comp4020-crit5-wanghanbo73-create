@@ -26,6 +26,7 @@ import {
   type PlayerState,
   type Pose,
 } from "./game-core.ts";
+import { isMuted, playBrickBreak, playJump, playLand, playLose, playMysteryTrigger, playStomp, playWin, toggleMute } from "./audio.ts";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game-canvas");
 if (!canvas) throw new Error("missing #game-canvas");
@@ -35,6 +36,20 @@ const winOverlay = document.querySelector<HTMLDivElement>("#win-overlay");
 const winRestartButton = document.querySelector<HTMLButtonElement>("#win-restart-button");
 if (!loseOverlay || !restartButton) throw new Error("missing lose-overlay markup");
 if (!winOverlay || !winRestartButton) throw new Error("missing win-overlay markup");
+
+const muteButton = document.querySelector<HTMLButtonElement>("#mute-toggle");
+if (!muteButton) throw new Error("missing mute-toggle markup");
+
+function refreshMuteButton(): void {
+  const muted = isMuted();
+  muteButton!.textContent = muted ? "Sound: Off" : "Sound: On";
+  muteButton!.setAttribute("aria-pressed", String(muted));
+}
+refreshMuteButton();
+muteButton.addEventListener("click", () => {
+  toggleMute();
+  refreshMuteButton();
+});
 
 // The canvas's internal resolution is the fixed logical playfield; CSS scales
 // its on-page size, but every physics number in game-core.ts is expressed in
@@ -120,16 +135,31 @@ function tick(time: number): void {
 
   const prevStatus = game.status;
   const prevGrounded = game.player.grounded;
+  const jumpAttempt = input.jumpPressed && prevGrounded;
+  const prevMysteryUsed = game.mysteryBlock.used;
+  const prevBricksDestroyed = game.bricks.map((brick) => brick.destroyed);
+  const prevEnemyAlive = game.enemy.alive;
 
   game = updateGame(game, input, dt);
 
-  if (prevStatus === "PLAYING" && game.status === "LOSE") loseAnimStart = time;
-  if (prevStatus === "PLAYING" && game.status === "WIN") winAnimStart = time;
+  if (prevStatus === "PLAYING" && game.status === "LOSE") {
+    loseAnimStart = time;
+    playLose();
+  }
+  if (prevStatus === "PLAYING" && game.status === "WIN") {
+    winAnimStart = time;
+    playWin();
+  }
   if (!prevGrounded && game.player.grounded) {
     landingAnimStart = time;
     landingAnimX = game.player.x;
     landingAnimY = game.player.y;
+    playLand();
   }
+  if (jumpAttempt && !game.player.grounded) playJump();
+  if (!prevMysteryUsed && game.mysteryBlock.used) playMysteryTrigger();
+  if (game.bricks.some((brick, i) => brick.destroyed && !prevBricksDestroyed[i])) playBrickBreak();
+  if (prevEnemyAlive && !game.enemy.alive) playStomp();
 
   loseOverlay!.hidden = game.status !== "LOSE";
   winOverlay!.hidden = game.status !== "WIN";
